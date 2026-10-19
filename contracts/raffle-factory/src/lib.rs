@@ -624,6 +624,36 @@ impl RaffleFactory {
         Ok(op_id)
     }
 
+    /// Propose a protocol-fee update under the factory timelock.
+    ///
+    /// The fee is unchanged until the returned operation is executed after
+    /// [`TIMELOCK_DELAY_SECONDS`] has elapsed.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current admin address.
+    ///
+    /// # Parameters
+    ///
+    /// - `protocol_fee_bp` — New protocol fee in basis points, up to
+    ///   [`MAX_PROTOCOL_FEE_BP`] (2 000, or 20%).
+    ///
+    /// # Returns
+    ///
+    /// The `op_id` to pass to [`execute_config_change`](Self::execute_config_change)
+    /// or [`cancel_config_change`](Self::cancel_config_change).
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the admin.
+    /// - [`ContractError::InvalidParameters`] — fee exceeds the configured cap.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::AdminOpProposed`] on success.
+    ///
+    /// See also: [`docs/FEE_MODEL.md`](../../../docs/FEE_MODEL.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `AdminOpProposed`.
     pub fn propose_fee_change(env: Env, protocol_fee_bp: u32) -> Result<u32, ContractError> {
         let admin = require_admin(&env)?;
         if protocol_fee_bp > MAX_PROTOCOL_FEE_BP {
@@ -661,6 +691,34 @@ impl RaffleFactory {
         Ok(op_id)
     }
 
+    /// Propose changing the WASM hash used for future raffle deployments.
+    ///
+    /// This does not upgrade the factory or existing instances. The new hash
+    /// is stored only when the returned operation is executed after the
+    /// timelock elapses.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current admin address.
+    ///
+    /// # Parameters
+    ///
+    /// - `new_wasm_hash` — WASM hash to use for subsequently created instances.
+    ///
+    /// # Returns
+    ///
+    /// The `op_id` to pass to [`execute_config_change`](Self::execute_config_change)
+    /// or [`cancel_config_change`](Self::cancel_config_change).
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the admin.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::AdminOpProposed`] on success.
+    ///
+    /// See also: [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `AdminOpProposed`.
     pub fn propose_wasm_upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<u32, ContractError> {
         let admin = require_admin(&env)?;
         let op_id = env
@@ -693,6 +751,38 @@ impl RaffleFactory {
         Ok(op_id)
     }
 
+    /// Execute a pending administrative operation after its timelock expires.
+    ///
+    /// Applies the operation identified by `op_id` and removes it from
+    /// pending storage. `Oracle` and `SwapRouter` [`ConfigKey`] values are
+    /// currently placeholders: those arms validate the address but do not
+    /// store or otherwise apply it.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current admin address.
+    ///
+    /// # Parameters
+    ///
+    /// - `op_id` — Identifier returned by a proposal method or
+    ///   [`set_config`](Self::set_config).
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the admin.
+    /// - [`ContractError::NoPendingOp`] — no pending operation has this ID.
+    /// - [`ContractError::TimelockNotElapsed`] — the operation's effective
+    ///   timestamp has not been reached.
+    /// - [`ContractError::InvalidParameters`] — a fee or role address is invalid.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::AdminOpExecuted`] on success. Oracle approval and
+    /// removal operations also emit [`events::OracleApproved`] or
+    /// [`events::OracleRemoved`], respectively.
+    ///
+    /// See also: [`docs/EVENTS.md`](../../../docs/EVENTS.md) —
+    /// `AdminOpExecuted`, `OracleApproved`, and `OracleRemoved`.
     pub fn execute_config_change(env: Env, op_id: u32) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
 
@@ -824,6 +914,22 @@ impl RaffleFactory {
 
     /// Return the pending operation for `op_id`, or `None` if it has been
     /// executed, cancelled, or never created.
+    ///
+    /// # Auth
+    ///
+    /// No authorization is required.
+    ///
+    /// # Parameters
+    ///
+    /// - `op_id` — Identifier returned when the operation was proposed.
+    ///
+    /// # Errors
+    ///
+    /// This view does not return a [`ContractError`].
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
     pub fn get_pending_op(env: Env, op_id: u32) -> Option<PendingOp> {
         env.storage().persistent().get(&DataKey::PendingOp(op_id))
     }
@@ -1058,6 +1164,29 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Clear the factory-wide pause and resume factory operations.
+    ///
+    /// This clears the factory-wide pause flag; it does not change the separate
+    /// creation-only pause or the emergency pause flag.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current admin address.
+    ///
+    /// # Parameters
+    ///
+    /// This method takes no parameters.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the admin.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::ContractUnpaused`] on success.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `ContractUnpaused`.
     pub fn unpause_factory(env: Env) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -1071,6 +1200,27 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Return whether the factory-wide pause is active, independently of the
+    /// creation-only pause.
+    ///
+    /// # Auth
+    ///
+    /// No authorization is required.
+    ///
+    /// # Parameters
+    ///
+    /// This method takes no parameters.
+    ///
+    /// # Errors
+    ///
+    /// This view does not return a [`ContractError`].
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
+    ///
+    /// See [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) for pause
+    /// behavior and precedence.
     pub fn is_factory_paused(env: Env) -> bool {
         env.storage()
             .instance()
@@ -1078,6 +1228,27 @@ impl RaffleFactory {
             .unwrap_or(false)
     }
 
+    /// Return whether creation of new raffles is paused independently of the
+    /// factory-wide pause.
+    ///
+    /// # Auth
+    ///
+    /// No authorization is required.
+    ///
+    /// # Parameters
+    ///
+    /// This method takes no parameters.
+    ///
+    /// # Errors
+    ///
+    /// This view does not return a [`ContractError`].
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
+    ///
+    /// See [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) for pause
+    /// behavior and precedence.
     pub fn is_creation_paused(env: Env) -> bool {
         env.storage()
             .instance()
@@ -1085,6 +1256,34 @@ impl RaffleFactory {
             .unwrap_or(false)
     }
 
+    /// Propose transferring factory administration to another address.
+    ///
+    /// The proposed address must call [`accept_factory_admin`](Self::accept_factory_admin)
+    /// to complete the transfer. Calling this with the current admin address
+    /// cancels any pending proposal and emits no event.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current admin address.
+    ///
+    /// # Parameters
+    ///
+    /// - `new_admin` — Proposed admin; must be a valid role address unless it
+    ///   equals the current admin to cancel a pending transfer.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the admin.
+    /// - [`ContractError::InvalidParameters`] — proposed address is invalid.
+    /// - [`ContractError::AdminTransferPending`] — another proposal is pending.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::AdminTransferProposed`] when a new transfer is proposed;
+    /// emits no event when the current admin cancels a proposal.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `AdminTransferProposed`.
     pub fn transfer_factory_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
 
@@ -1113,6 +1312,31 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Accept a pending factory-admin transfer.
+    ///
+    /// Only the address currently stored as the pending admin can authorize
+    /// acceptance; success replaces the current admin and clears the proposal.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the pending admin address.
+    ///
+    /// # Parameters
+    ///
+    /// This method takes no parameters.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NoPendingTransfer`] — no transfer is pending.
+    /// - [`ContractError::NotAuthorized`] — the current admin value is missing.
+    ///   Authorization failure by the pending address also aborts the call.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::AdminTransferAccepted`] on success.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `AdminTransferAccepted`.
     pub fn accept_factory_admin(env: Env) -> Result<(), ContractError> {
         let pending: Address = env
             .storage()
@@ -1140,8 +1364,35 @@ impl RaffleFactory {
         Ok(())
     }
 
-
-
+    /// Ask a raffle instance to propose an admin transfer to the factory's
+    /// pending admin, or to its current admin when no factory transfer is
+    /// pending.
+    ///
+    /// This only stages the instance-side transfer; the target address must
+    /// still accept it on the instance.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current factory admin.
+    ///
+    /// # Parameters
+    ///
+    /// - `instance_address` — Address of the raffle instance to update.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the factory admin.
+    /// - The call also fails if the target instance rejects the
+    ///   `transfer_admin` invocation.
+    ///
+    /// # Events
+    ///
+    /// Emits no event while staging the instance transfer. The instance emits
+    /// `AdminChanged` only when the proposed admin accepts that transfer.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) for
+    /// the coordinated two-contract admin-transfer flow, and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `AdminChanged`.
     pub fn sync_admin(env: Env, instance_address: Address) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
         let next_admin: Address = env
@@ -1157,6 +1408,27 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Pause a raffle instance by relaying its `pause` entrypoint.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current factory admin.
+    ///
+    /// # Parameters
+    ///
+    /// - `instance_address` — Address of the instance to pause.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the factory admin.
+    /// - The call also fails if the target instance rejects the `pause` call.
+    ///
+    /// # Events
+    ///
+    /// Emits no factory event; the instance may emit its pause event.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md).
     pub fn pause_instance(env: Env, instance_address: Address) -> Result<(), ContractError> {
         require_admin(&env)?;
         env.invoke_contract::<()>(
@@ -1167,6 +1439,27 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Resume a raffle instance by relaying its `unpause` entrypoint.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current factory admin.
+    ///
+    /// # Parameters
+    ///
+    /// - `instance_address` — Address of the instance to resume.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the factory admin.
+    /// - The call also fails if the target instance rejects the `unpause` call.
+    ///
+    /// # Events
+    ///
+    /// Emits no factory event; the instance may emit its resume event.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md).
     pub fn unpause_instance(env: Env, instance_address: Address) -> Result<(), ContractError> {
         require_admin(&env)?;
         env.invoke_contract::<()>(
@@ -1177,6 +1470,28 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Record a participant address once in the factory-wide unique count.
+    ///
+    /// The `participant` must authorize the call. Although this bookkeeping
+    /// entrypoint is intended to be called by raffle instances, the current
+    /// `require_factory_raffle` helper does not enforce the caller's identity.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from `participant`.
+    ///
+    /// # Parameters
+    ///
+    /// - `participant` — Address to record as a unique participant.
+    ///
+    /// # Errors
+    ///
+    /// This method does not currently return a [`ContractError`]. An
+    /// authorization failure aborts the call.
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
     pub fn track_participant(env: Env, participant: Address) -> Result<(), ContractError> {
         require_factory_raffle(&env)?;
         participant.require_auth();
@@ -1197,8 +1512,27 @@ impl RaffleFactory {
         Ok(())
     }
 
-
-
+    /// Set the minimum delay between raffle creations by non-whitelisted
+    /// creators.
+    ///
+    /// The delay defaults to 300 seconds when unset. This setter stores the
+    /// supplied value without imposing a range limit.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current admin address.
+    ///
+    /// # Parameters
+    ///
+    /// - `delay_seconds` — Minimum number of seconds between creations.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the admin.
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
     pub fn set_creation_delay(env: Env, delay_seconds: u64) -> Result<(), ContractError> {
         require_admin(&env)?;
         env.storage()
@@ -1249,6 +1583,30 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Add or remove a partner address from the raffle-creation whitelist.
+    ///
+    /// Whitelisted creators bypass the minimum creation delay. The partner
+    /// index is updated along with the status flag.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current admin address.
+    ///
+    /// # Parameters
+    ///
+    /// - `partner` — Creator address whose whitelist status to update.
+    /// - `status` — `true` to whitelist the address, `false` to remove it.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the admin.
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
+    ///
+    /// See [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) for factory
+    /// creation controls.
     pub fn set_whitelist_status(
         env: Env,
         partner: Address,
@@ -1438,7 +1796,32 @@ impl RaffleFactory {
         env.storage().persistent().set(key, &next);
     }
 
-    /// Called by a raffle instance after finalization (#484).
+    /// Record a raffle's final metrics in the factory leaderboards (#484).
+    ///
+    /// The address must be a registered factory-deployed raffle and must
+    /// authorize this call. Each metric is kept in descending order, capped
+    /// at [`LEADERBOARD_CAP`] entries.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from `raffle_address`.
+    ///
+    /// # Parameters
+    ///
+    /// - `raffle_address` — Registered raffle instance submitting its metrics.
+    /// - `tickets_sold` — Total tickets sold by the raffle.
+    /// - `prize_amount` — Final prize amount.
+    /// - `total_volume` — Total ticket-sale volume.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — `raffle_address` is not registered
+    ///   as a valid factory raffle.
+    /// - The call aborts if `raffle_address` does not authorize the invocation.
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
     pub fn record_leaderboard_entry(
         env: Env,
         raffle_address: Address,
@@ -1457,6 +1840,26 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Return the top raffle addresses and values for one leaderboard metric.
+    ///
+    /// Entries are ordered from highest to lowest and the result contains at
+    /// most [`LEADERBOARD_CAP`] entries.
+    ///
+    /// # Auth
+    ///
+    /// No authorization is required.
+    ///
+    /// # Parameters
+    ///
+    /// - `metric` — Leaderboard to read: ticket sales, prize amount, or volume.
+    ///
+    /// # Errors
+    ///
+    /// This view does not return a [`ContractError`].
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
     pub fn get_leaderboard(env: Env, metric: LeaderboardMetric) -> Vec<(Address, i128)> {
         let key = match metric {
             LeaderboardMetric::TicketsSold => DataKey::TopByTickets,
@@ -1469,6 +1872,29 @@ impl RaffleFactory {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Activate the factory-wide emergency pause flag.
+    ///
+    /// The flag is read by factory and instance workflows; this method sets
+    /// the flag but does not iterate over or call every deployed instance.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current factory admin.
+    ///
+    /// # Parameters
+    ///
+    /// - `reason` — Free-text reason included in the pause event.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the factory admin.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::GlobalEmergencyPaused`] on success.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `GlobalEmergencyPaused`.
     pub fn emergency_pause_all(env: Env, reason: soroban_sdk::String) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
         env.storage()
@@ -1483,6 +1909,29 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Clear the factory-wide emergency pause flag.
+    ///
+    /// This does not change the factory-wide creation pause, creation-only
+    /// pause, or any instance's independent pause state.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current factory admin.
+    ///
+    /// # Parameters
+    ///
+    /// This method takes no parameters.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the factory admin.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::GlobalEmergencyUnpaused`] on success.
+    ///
+    /// See also: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `GlobalEmergencyUnpaused`.
     pub fn emergency_unpause_all(env: Env) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
         env.storage()
@@ -1496,6 +1945,26 @@ impl RaffleFactory {
         Ok(())
     }
 
+    /// Return whether the factory-wide emergency pause flag is active.
+    ///
+    /// # Auth
+    ///
+    /// No authorization is required.
+    ///
+    /// # Parameters
+    ///
+    /// This method takes no parameters.
+    ///
+    /// # Errors
+    ///
+    /// This view does not return a [`ContractError`].
+    ///
+    /// # Events
+    ///
+    /// Emits no events.
+    ///
+    /// See [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) for pause
+    /// behavior and precedence.
     pub fn is_global_paused(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -1503,6 +1972,33 @@ impl RaffleFactory {
             .unwrap_or(false)
     }
 
+    /// Permanently wipe a raffle instance and remove its factory indexes.
+    ///
+    /// The raffle ID is tombstoned and is never reused. This method does not
+    /// check the raffle's status or age, so the admin must verify it is safe
+    /// to clean before calling. The cleanup event currently reports
+    /// `finish_time` as zero.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the current factory admin.
+    ///
+    /// # Parameters
+    ///
+    /// - `raffle_id` — Stable ID returned by the factory's raffle indexing.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAuthorized`] — caller is not the factory admin.
+    /// - [`ContractError::InvalidRaffleId`] — no raffle or creator metadata is
+    ///   stored for this ID.
+    /// - The call also fails if the raffle instance rejects `wipe_storage`.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::RaffleCleanedUp`] on success.
+    ///
+    /// See also: [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `RaffleCleanedUp`.
     pub fn clean_old_raffle(env: Env, raffle_id: u32) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
 

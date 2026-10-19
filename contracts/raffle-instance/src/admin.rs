@@ -478,14 +478,35 @@ pub(crate) fn rescue_tokens(
     Ok(())
 }
 
-/// Sweep residual payment-token dust to the treasury after the raffle is fully
-/// settled. Only allowed in `Claimed` / `Cancelled`, and only when no prize or
-/// ticket-refund entitlement remains outstanding.
-/// Sweep only payment-token balance that exceeds every remaining entitlement.
+/// Sweep payment-token balance above all remaining raffle entitlements to the
+/// treasury.
 ///
-/// This is allowed after `Claimed`, or after `Cancelled` with the prize
-/// refunded and every ticket refund completed. Accumulated fees remain for
-/// `withdraw_fees` and are never swept as dust.
+/// This is allowed in `Claimed`, or in `Cancelled` after any deposited prize
+/// has been refunded and every ticket refund is complete. In either state,
+/// only the balance exceeding the calculated entitlements is swept.
+/// Accumulated fees are included in that reserve and remain available to
+/// `withdraw_fees`.
+///
+/// # Auth
+///
+/// Requires authorization from the raffle admin.
+///
+/// # Errors
+///
+/// - [`Error::NotAuthorized`] — admin is missing or did not authorize the call.
+/// - [`Error::NotInitialized`] — raffle state has not been initialized.
+/// - [`Error::InvalidStatus`] — raffle is neither `Claimed` nor `Cancelled`.
+/// - [`Error::InvalidStateTransition`] — a cancelled raffle still has an
+///   unrefunded prize or ticket, or the balance is below its entitlements.
+/// - [`Error::InvalidParameters`] — no treasury address is configured.
+/// - [`Error::ArithmeticOverflow`] — entitlement totals overflow.
+/// - [`Error::TokenTransferFailed`] — transferring the surplus to the treasury
+///   fails.
+///
+/// # Events
+///
+/// Emits [`DustSwept`] when a positive surplus is transferred; emits no event
+/// when there is no surplus.
 pub(crate) fn sweep_dust(env: Env) -> Result<(), Error> {
     let admin: Address = env
         .storage()

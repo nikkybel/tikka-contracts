@@ -4,7 +4,7 @@
 //! into a state where ticket sales can begin:
 //!
 //! 1. [`init`] — called once by the factory immediately after deployment.
-//!    Validates every field of [`RaffleConfig`], writes the [`Raffle`] to
+//!    Validates supported constraints for [`RaffleConfig`], writes the [`Raffle`] to
 //!    instance storage, and emits [`events::RaffleCreated`].
 //!
 //! 2. [`deposit_prize`] — called by the creator after `init`.  Transfers the
@@ -48,25 +48,33 @@ use crate::{
 ///
 /// # Validation performed
 ///
+/// The exported `RaffleInstance::init` entrypoint in `lib.rs` performs these
+/// checks. This internal module helper is not the validation path used by that
+/// entrypoint.
+///
 /// | Field | Rule |
 /// |---|---|
-/// | `description` | `len ≤ MAX_DESCRIPTION_LENGTH` (1 000 bytes) |
-/// | `end_time` | Must be in the future unless `no_deadline = true`; `no_deadline` requires `end_time == 0` |
-/// | `max_tickets` | `1 ≤ max_tickets ≤ MAX_TICKETS_LIMIT` (100 000) |
-/// | `max_tickets_per_tx` | `1 ≤ max_tickets_per_tx ≤ max_tickets` |
-/// | `max_tickets_per_address` | `≤ max_tickets`; `0` = unlimited. Enforced per-address at purchase time (both `buy_tickets` and `buy_tickets_for`) via `Error::ExceedsMaxTicketsPerAddress` |
-/// | `min_tickets` | `min_tickets ≤ max_tickets` |
-/// | `ticket_price` | `≥ MIN_TICKET_PRICE` (10 000 stroops) |
-/// | `prize_amount` | `ticket_price ≤ prize_amount ≤ MAX_PRIZE_AMOUNT` |
-/// | `prizes` | Non-empty, `len ≤ MAX_PRIZES` (100), basis-points sum == 10 000 |
-/// | `protocol_fee_bp` | `≤ 10 000`; applied to ticket purchases and prize claims |
-/// | `oracle_address` | Required (and not self) when `randomness_source == External`; forbidden otherwise |
+/// | `description` | At most `MAX_DESCRIPTION_LENGTH` (1 000 bytes) |
+/// | `end_time`, `no_deadline` | If `no_deadline` is true, `end_time` must be 0; otherwise `end_time` must be later than the current ledger timestamp |
+/// | `max_tickets` | `1..=MAX_TICKETS_LIMIT` (100 000) |
+/// | `min_tickets` | Must not exceed `max_tickets` |
+/// | `max_tickets_per_tx` | `1..=max_tickets` |
+/// | `max_tickets_per_address` | `0` means unlimited; otherwise must not exceed `max_tickets`. The cap is also enforced during purchases |
+/// | `ticket_price` | At least `MIN_TICKET_PRICE` (10 000 stroops) |
+/// | `prize_amount` | At least `ticket_price`, at most `MAX_PRIZE_AMOUNT`, and within the selected randomness source's internal cap |
+/// | `prizes` | Non-empty; at most `MAX_PRIZES` and `max_tickets` entries; each basis-point value is at most 10 000 and their sum is exactly 10 000 |
+/// | `protocol_fee_bp` | At most 10 000; a non-zero fee requires `treasury_address` |
+/// | `randomness_source`, `oracle_address` | External randomness requires a non-self oracle address; other modes reject a single `oracle_address` |
+/// | Quorum randomness | `1 ≤ k ≤ oracles.len() ≤ 10`; no oracle may be the raffle contract, and `oracle_address` must be unset |
 /// | `metadata_hash` | Must not be the all-zero 32-byte value |
-/// | `category` | See [`validate_category`] |
-/// | `payment_token` | Must be a valid SAC (queried via `try_decimals`) |
-/// | `claim_lockup_seconds` | `≤ MAX_CLAIM_LOCKUP_SECONDS` (7 days) after `resolve_defaults` |
-/// | `claim_expiry_seconds` | `≥ MIN_CLAIM_EXPIRY_SECONDS` and greater than the claim lockup after `resolve_defaults` |
-/// | `swap_deadline_seconds` | `≤ MAX_SWAP_DEADLINE_SECONDS` (3 600 s) after `resolve_defaults` |
+/// | `payment_token` | Must pass token-contract validation (`try_decimals`) |
+/// | `prize_token` | If set, must pass token-contract validation; otherwise defaults to `payment_token` |
+/// | `claim_lockup_seconds` | After defaults are resolved, at most `MAX_CLAIM_LOCKUP_SECONDS` (7 days) |
+/// | `claim_expiry_seconds` | After defaults are resolved, at least `MIN_CLAIM_EXPIRY_SECONDS` and greater than the claim lockup |
+/// | `swap_deadline_seconds` | After defaults are resolved, at most `MAX_SWAP_DEADLINE_SECONDS` (3 600 seconds) |
+/// | Early-bird settings | `early_bird_ticket_percentage` is at most 100; a non-zero percentage requires `early_bird_discount_bp` at most 10 000 |
+/// | `allow_multiple` | When false and `max_tickets_per_address` is 0, init normalizes the per-address cap to 1 |
+/// | `category` | Not validated by init |
 ///
 /// # Parameters
 ///
@@ -82,17 +90,22 @@ use crate::{
 /// # Errors
 ///
 /// - [`Error::AlreadyInitialized`] — contract already has raffle state.
-/// - [`Error::InvalidParameters`] — any validation rule above is violated.
+/// - [`Error::InvalidParameters`] — a configuration constraint above is
+///   violated, including an invalid deadline.
 /// - [`Error::InvalidTicketRange`] — `min_tickets > max_tickets`.
-/// - [`Error::InvalidEndTime`] — `end_time` is non-zero but in the past.
 /// - [`Error::TooManyPrizes`] — `prizes.len() > MAX_PRIZES`.
-/// - [`Error::InvalidTokenAddress`] — `payment_token` is not a valid SAC.
+/// - [`Error::InvalidTokenAddress`] — `payment_token` or `prize_token` is not
+///   a valid token contract.
+///
+/// Configuration validation runs before the already-initialized check, so an
+/// invalid configuration on a previously initialized instance returns its
+/// configuration error first.
 ///
 /// # Events
 ///
 /// Emits [`events::RaffleCreated`].
 ///
-/// See also: [`docs/EVENTS.md`](../../../../docs/EVENTS.md) — `RaffleCreated`.
+/// See also: [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `RaffleCreated`.
 #[allow(dead_code)]
 pub(crate) fn init(
     env: Env,

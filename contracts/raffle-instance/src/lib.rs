@@ -1027,9 +1027,34 @@ if config.randomness_source == RandomnessSource::External {
         result
     }
 
-    /// Sweep residual payment-token balance to the treasury after the raffle is
-    /// fully settled (`Claimed` or `Cancelled` with no outstanding prize or
-    /// ticket-refund entitlements).
+    /// Sweep payment-token balance above all remaining raffle entitlements to
+    /// the treasury.
+    ///
+    /// Allowed in `Claimed`, or in `Cancelled` after any deposited prize has
+    /// been refunded and every ticket refund is complete. Only the surplus
+    /// above the calculated entitlements is transferred; accumulated fees
+    /// remain reserved for `withdraw_fees`.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the raffle admin.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NotAuthorized`] — admin is missing or did not authorize the call.
+    /// - [`Error::NotInitialized`] — raffle state has not been initialized.
+    /// - [`Error::InvalidStatus`] — raffle is neither `Claimed` nor `Cancelled`.
+    /// - [`Error::InvalidStateTransition`] — a cancelled raffle still has an
+    ///   unrefunded prize or ticket, or the balance is below its entitlements.
+    /// - [`Error::InvalidParameters`] — no treasury address is configured.
+    /// - [`Error::ArithmeticOverflow`] — entitlement totals overflow.
+    /// - [`Error::TokenTransferFailed`] — transferring the surplus to the treasury
+    ///   fails.
+    ///
+    /// # Events
+    ///
+    /// Emits [`events::DustSwept`] when a positive surplus is transferred;
+    /// emits no event when there is no surplus.
     ///
     /// See also: [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `DustSwept`.
     pub fn sweep_dust(env: Env) -> Result<(), Error> {

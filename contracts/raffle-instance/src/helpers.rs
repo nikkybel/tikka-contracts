@@ -599,7 +599,7 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
 /// - [`events::WinnerDrawn`] — emitted once per winner.
 /// - [`events::RaffleFinalized`] — emitted after all winners are resolved.
 ///
-/// See also: [`docs/EVENTS.md`](../../../../docs/EVENTS.md) — `WinnerDrawn`,
+/// See also: [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `WinnerDrawn`,
 /// `RaffleFinalized`.
 pub(crate) fn do_finalize_with_seed(
     env: &Env,
